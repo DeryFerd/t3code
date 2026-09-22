@@ -220,6 +220,24 @@ const EnvServerConfig = Config.all({
     Config.map(Option.getOrUndefined),
   ),
   pairingTokenTtl: Config.schema(DurationFromString, "T3CODE_PAIRING_TOKEN_TTL").pipe(
+    // `Duration.fromInput` accepts "Infinity" and negative amounts; either would
+    // poison every default pairing link with a NaN expiration, so stop at config
+    // parsing instead of failing on first use.
+    Config.mapEffect((duration) => {
+      const millis = Duration.toMillis(duration);
+      return Number.isFinite(millis) && millis > 0
+        ? Effect.succeed(duration)
+        : Effect.fail(
+            new Config.ConfigError(
+              new Schema.SchemaError(
+                new SchemaIssue.InvalidValue({
+                  message:
+                    "T3CODE_PAIRING_TOKEN_TTL must be a finite, positive duration (for example 15m or 1h).",
+                }),
+              ),
+            ),
+          );
+    }),
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
