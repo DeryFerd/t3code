@@ -489,6 +489,24 @@ function taskLinkageActivityFields(payload: Record<string, unknown>): Record<str
   return fields;
 }
 
+/**
+ * A file-change item's `data` carries the full patch text for every changed
+ * file in `item.changes[].diff`. Persisting it verbatim writes the same
+ * multi-megabyte diff into both the event log and the projection table — one
+ * row per lifecycle event — which is what exhausted the backend heap in
+ * #12758. No reader needs that text: `ws.ts` and `http.ts` apply
+ * `projectActivityPayload` before any payload reaches a client, so clients
+ * already see only the projected form (changed paths, status). Persist that
+ * form for file-change rows; other tool types keep their full payloads, the
+ * deliberate choice from #6675.
+ */
+function projectFileChangeData(
+  activity: OrchestrationThreadActivity,
+  itemType: string,
+): OrchestrationThreadActivity {
+  return itemType === "file_change" ? projectActivityPayload(activity) : activity;
+}
+
 export function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
   taskTitle?: string,
@@ -973,30 +991,33 @@ export function runtimeEventToActivities(
         return [];
       }
       return [
-        {
-          id: event.eventId,
-          createdAt: event.createdAt,
-          tone: "tool",
-          kind: "tool.completed",
-          summary: event.payload.title ?? "Tool",
-          payload: {
-            itemType: event.payload.itemType,
-            ...(event.itemId !== undefined ? { toolCallId: event.itemId } : {}),
-            ...(event.payload.status ? { status: event.payload.status } : {}),
-            ...(event.payload.title ? { title: event.payload.title } : {}),
-            ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-            ...(event.payload.toolSurface ? { toolSurface: event.payload.toolSurface } : {}),
-            ...(event.payload.toolIcon ? { toolIcon: event.payload.toolIcon } : {}),
-            ...(event.payload.toolSource ? { toolSource: event.payload.toolSource } : {}),
-            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
-            ...(event.payload.agentId ? { agentId: event.payload.agentId } : {}),
-            ...(event.payload.parentToolUseId
-              ? { parentToolUseId: event.payload.parentToolUseId }
-              : {}),
+        projectFileChangeData(
+          {
+            id: event.eventId,
+            createdAt: event.createdAt,
+            tone: "tool",
+            kind: "tool.completed",
+            summary: event.payload.title ?? "Tool",
+            payload: {
+              itemType: event.payload.itemType,
+              ...(event.itemId !== undefined ? { toolCallId: event.itemId } : {}),
+              ...(event.payload.status ? { status: event.payload.status } : {}),
+              ...(event.payload.title ? { title: event.payload.title } : {}),
+              ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+              ...(event.payload.toolSurface ? { toolSurface: event.payload.toolSurface } : {}),
+              ...(event.payload.toolIcon ? { toolIcon: event.payload.toolIcon } : {}),
+              ...(event.payload.toolSource ? { toolSource: event.payload.toolSource } : {}),
+              ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+              ...(event.payload.agentId ? { agentId: event.payload.agentId } : {}),
+              ...(event.payload.parentToolUseId
+                ? { parentToolUseId: event.payload.parentToolUseId }
+                : {}),
+            },
+            turnId: toTurnId(event.turnId) ?? null,
+            ...maybeSequence,
           },
-          turnId: toTurnId(event.turnId) ?? null,
-          ...maybeSequence,
-        },
+          event.payload.itemType,
+        ),
       ];
     }
 
@@ -1005,30 +1026,33 @@ export function runtimeEventToActivities(
         return [];
       }
       return [
-        {
-          id: event.eventId,
-          createdAt: event.createdAt,
-          tone: "tool",
-          kind: "tool.started",
-          summary: `${event.payload.title ?? "Tool"} started`,
-          payload: {
-            itemType: event.payload.itemType,
-            ...(event.itemId !== undefined ? { toolCallId: event.itemId } : {}),
-            ...(event.payload.status ? { status: event.payload.status } : {}),
-            ...(event.payload.title ? { title: event.payload.title } : {}),
-            ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-            ...(event.payload.toolSurface ? { toolSurface: event.payload.toolSurface } : {}),
-            ...(event.payload.toolIcon ? { toolIcon: event.payload.toolIcon } : {}),
-            ...(event.payload.toolSource ? { toolSource: event.payload.toolSource } : {}),
-            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
-            ...(event.payload.agentId ? { agentId: event.payload.agentId } : {}),
-            ...(event.payload.parentToolUseId
-              ? { parentToolUseId: event.payload.parentToolUseId }
-              : {}),
+        projectFileChangeData(
+          {
+            id: event.eventId,
+            createdAt: event.createdAt,
+            tone: "tool",
+            kind: "tool.started",
+            summary: `${event.payload.title ?? "Tool"} started`,
+            payload: {
+              itemType: event.payload.itemType,
+              ...(event.itemId !== undefined ? { toolCallId: event.itemId } : {}),
+              ...(event.payload.status ? { status: event.payload.status } : {}),
+              ...(event.payload.title ? { title: event.payload.title } : {}),
+              ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+              ...(event.payload.toolSurface ? { toolSurface: event.payload.toolSurface } : {}),
+              ...(event.payload.toolIcon ? { toolIcon: event.payload.toolIcon } : {}),
+              ...(event.payload.toolSource ? { toolSource: event.payload.toolSource } : {}),
+              ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+              ...(event.payload.agentId ? { agentId: event.payload.agentId } : {}),
+              ...(event.payload.parentToolUseId
+                ? { parentToolUseId: event.payload.parentToolUseId }
+                : {}),
+            },
+            turnId: toTurnId(event.turnId) ?? null,
+            ...maybeSequence,
           },
-          turnId: toTurnId(event.turnId) ?? null,
-          ...maybeSequence,
-        },
+          event.payload.itemType,
+        ),
       ];
     }
 

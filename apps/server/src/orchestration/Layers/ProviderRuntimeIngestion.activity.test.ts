@@ -142,3 +142,75 @@ describe("runtimeEventToActivities tool streaming persistence", () => {
     expect(payload.data).toEqual(streamingData);
   });
 });
+
+describe("runtimeEventToActivities file-change persistence", () => {
+  // A Codex fileChange notification carries the full patch text for every
+  // changed file. Persisting it verbatim is what made #12758 exhaust the
+  // backend heap: the same diff landed in both the event log and the
+  // projection table, one row per lifecycle event.
+  const diffSentinel = "@@ DIFF_SENTINEL @@";
+  const oversizedDiff = `${diffSentinel}\n${"+ context line\n".repeat(40_000)}`;
+  const fileChangeData = {
+    item: {
+      type: "fileChange",
+      id: "item-file-1",
+      status: "completed",
+      changes: [
+        { diff: oversizedDiff, kind: "update", path: "src/app.ts" },
+        { diff: oversizedDiff, kind: "add", path: "src/new.ts" },
+      ],
+    },
+  };
+
+  it("does not persist file-change diff text on tool.completed", () => {
+    const event = {
+      ...base,
+      type: "item.completed",
+      eventId: EventId.make("evt-file-change-completed"),
+      payload: {
+        itemType: "file_change",
+        status: "completed",
+        title: "File change",
+        data: fileChangeData,
+      },
+    } satisfies ProviderRuntimeEvent;
+
+    const activities = runtimeEventToActivities(event);
+
+    expect(activities).toHaveLength(1);
+    const payload = activities[0]?.payload as Record<string, unknown>;
+    const serialized = JSON.stringify(payload);
+    expect(serialized).not.toContain(diffSentinel);
+    expect(serialized.length).toBeLessThan(2_000);
+    expect((payload.data as Record<string, unknown>).files).toEqual([
+      { path: "src/app.ts" },
+      { path: "src/new.ts" },
+    ]);
+  });
+
+  it("does not persist file-change diff text on tool.started", () => {
+    const event = {
+      ...base,
+      type: "item.started",
+      eventId: EventId.make("evt-file-change-started"),
+      payload: {
+        itemType: "file_change",
+        status: "inProgress",
+        title: "File change",
+        data: fileChangeData,
+      },
+    } satisfies ProviderRuntimeEvent;
+
+    const activities = runtimeEventToActivities(event);
+
+    expect(activities).toHaveLength(1);
+    const payload = activities[0]?.payload as Record<string, unknown>;
+    const serialized = JSON.stringify(payload);
+    expect(serialized).not.toContain(diffSentinel);
+    expect(serialized.length).toBeLessThan(2_000);
+    expect((payload.data as Record<string, unknown>).files).toEqual([
+      { path: "src/app.ts" },
+      { path: "src/new.ts" },
+    ]);
+  });
+});
