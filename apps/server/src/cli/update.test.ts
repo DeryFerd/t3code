@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Executes the generated launcher with native cmd.exe on Windows.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -5,6 +6,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeStreamConsumers from "node:stream/consumers";
 
 import { repointLauncher, resolveLauncherPath } from "./update.ts";
 
@@ -101,38 +104,83 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
     }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 
-  it.effect("repoints a Windows shim and keeps its codepage header", () =>
+  it.effect("repoints a Windows shim without losing arguments, exit status, or codepage", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
-      const oldExe = path.join(root, "runtime/versions/1.0.0/t3.exe");
-      const newExe = path.join(root, "runtime/versions/2.0.0/t3.exe");
+      const versions = path.join(root, "Déry home/runtime/versions");
+      const oldExe = path.join(versions, "1.0.0/t3.exe");
+      const newExe = path.join(versions, "2.0.0/t3.exe");
       const bin = path.join(root, "bin");
       const shim = path.join(bin, "t3.cmd");
-      for (const file of [oldExe, newExe]) {
-        yield* fs.makeDirectory(path.dirname(file), { recursive: true });
-        yield* fs.writeFileString(file, "");
-      }
-      yield* fs.makeDirectory(bin, { recursive: true });
-      yield* fs.writeFileString(shim, `@echo off\r\nchcp 65001 >nul\r\n"${oldExe}" %*\r\n`);
+      yield* fs.makeDirectory(path.dirname(newExe), { recursive: true });
+      yield* fs.makeDirectory(bin);
+      yield* fs.writeFileString(shim, `@echo off\r\n"${oldExe}" %*\r\n`);
 
       const repointed = yield* repointLauncher({
         launchedAs: oldExe,
-        versionsDir: path.join(root, "runtime/versions"),
+        versionsDir: versions,
         targetEntryPath: newExe,
       }).pipe(
-        Effect.scoped,
-        Effect.provideService(HostProcessPlatform, "win32"),
-        Effect.provideService(HostProcessEnvironment, { PATH: bin }),
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(HostProcess.Environment, { PATH: bin }),
       );
+      assert.equal(Option.getOrUndefined(repointed), shim);
 
-      assert.deepStrictEqual(Option.getOrUndefined(repointed), shim);
-      const contents = yield* fs.readFileString(shim);
-      assert.ok(contents.includes(`"${newExe}"`));
-      // The rewritten shim must keep the UTF-8 codepage switch that lets
-      // cmd.exe read non-ASCII install paths.
-      assert.ok(contents.includes("chcp 65001 >nul"));
-    }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "win32")),
+      if (HostProcess.Platform.defaultValue() !== "win32") {
+        // Other hosts cannot execute cmd; check the emitted contract as a limited fallback.
+        const contents = yield* fs.readFileString(shim);
+        assert.match(contents, /chcp 65001 >nul\r?\n/);
+        assert.ok(contents.includes(`"${newExe}" %*`));
+        assert.match(contents, /set "T3EC=%ERRORLEVEL%"\r?\nchcp %T3CP% >nul/);
+        assert.match(contents, /exit \/b %T3EC%/);
+        return;
+      }
+
+      yield* fs.copyFile(HostProcess.ExecutablePath.defaultValue(), newExe);
+      yield* fs.writeFileString(
+        path.join(bin, "fixture.cjs"),
+        "console.log(JSON.stringify(process.argv.slice(2))); process.exit(Number(process.argv[2]));",
+      );
+      yield* fs.writeFileString(
+        path.join(bin, "run.cmd"),
+        [
+          "@echo off",
+          'for /f "tokens=2 delims=:" %%c in (\'chcp\') do set "TEST_CP=%%c"',
+          "chcp 437 >nul",
+          "for /f \"tokens=2 delims=:\" %%c in ('chcp') do echo BEFORE=%%c",
+          'call t3.cmd fixture.cjs %1 "one two" three',
+          'set "TEST_EXIT=%ERRORLEVEL%"',
+          "for /f \"tokens=2 delims=:\" %%c in ('chcp') do echo AFTER=%%c",
+          "chcp %TEST_CP% >nul",
+          "exit /b %TEST_EXIT%",
+          "",
+        ].join("\r\n"),
+      );
+      yield* Effect.tryPromise(async () => {
+        for (const status of [0, 42]) {
+          const child = NodeChildProcess.spawn("cmd.exe", ["/d", "/c", "run.cmd", `${status}`], {
+            cwd: bin,
+            stdio: ["ignore", "pipe", "pipe"],
+            // A separate console keeps the legacy codepage out of the test runner's console.
+            detached: true,
+            timeout: 10_000,
+          });
+          const [exitCode, stdout, stderr] = await Promise.all([
+            new Promise<number | null>((resolve, reject) => {
+              child.once("error", reject);
+              child.once("close", resolve);
+            }),
+            NodeStreamConsumers.text(child.stdout),
+            NodeStreamConsumers.text(child.stderr),
+          ]);
+          assert.equal(exitCode, status, stderr);
+          assert.ok(stdout.includes(JSON.stringify([`${status}`, "one two", "three"])));
+          assert.match(stdout, /BEFORE=\s*437\r?\n/);
+          assert.match(stdout, /AFTER=\s*437\r?\n/);
+        }
+      });
+    }).pipe(Effect.scoped),
   );
 });
