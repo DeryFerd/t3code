@@ -116,10 +116,21 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     const current = yield* fs.readFileString(shimPath).pipe(Effect.option);
     const quoted = Option.isSome(current) ? /^"([^"]+)"/m.exec(current.value)?.[1] : undefined;
     if (quoted === undefined || !ownsTarget(quoted)) return Option.none<string>();
-    const windowsShimBatch = (target: string): string =>
-      `@echo off\r\nfor /f "tokens=2 delims=:" %%c in ('chcp') do set "T3CP=%%c"\r\nchcp 65001 >nul\r\n"${target}" %*\r\nset "T3EC=%ERRORLEVEL%"\r\nchcp %T3CP% >nul\r\nset "T3CP="\r\nexit /b %T3EC%\r\n`;
+    // cmd decodes each batch line using the console codepage, including the UTF-8 target.
+    const contents = [
+      "@echo off",
+      "setlocal EnableExtensions DisableDelayedExpansion",
+      'set "T3CP="',
+      'for /f "tokens=2 delims=:" %%c in (\'chcp\') do set "T3CP=%%c"',
+      "if defined T3CP chcp 65001 >nul",
+      `"${input.targetEntryPath}" %*`,
+      'set "T3EC=%ERRORLEVEL%"',
+      "if defined T3CP chcp %T3CP% >nul",
+      "exit /b %T3EC%",
+      "",
+    ].join("\r\n");
     yield* fs
-      .writeFileString(shimPath, windowsShimBatch(input.targetEntryPath))
+      .writeFileString(shimPath, contents)
       .pipe(
         Effect.mapError(
           () => new CliUpdateError({ reason: `Could not rewrite the t3 launcher at ${shimPath}.` }),

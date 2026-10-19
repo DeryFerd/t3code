@@ -131,9 +131,10 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       if (HostProcess.Platform.defaultValue() !== "win32") {
         // Other hosts cannot execute cmd; check the emitted contract as a limited fallback.
         const contents = yield* fs.readFileString(shim);
+        assert.ok(contents.includes("setlocal EnableExtensions DisableDelayedExpansion"));
         assert.match(contents, /chcp 65001 >nul\r?\n/);
         assert.ok(contents.includes(`"${newExe}" %*`));
-        assert.match(contents, /set "T3EC=%ERRORLEVEL%"\r?\nchcp %T3CP% >nul/);
+        assert.match(contents, /set "T3EC=%ERRORLEVEL%"\r?\nif defined T3CP chcp %T3CP% >nul/);
         assert.match(contents, /exit \/b %T3EC%/);
         return;
       }
@@ -150,8 +151,11 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
           'for /f "tokens=2 delims=:" %%c in (\'chcp\') do set "TEST_CP=%%c"',
           "chcp 437 >nul",
           "for /f \"tokens=2 delims=:\" %%c in ('chcp') do echo BEFORE=%%c",
+          'set "T3CP=caller-codepage"',
+          'set "T3EC=caller-status"',
           'call t3.cmd fixture.cjs %1 "one two" three',
           'set "TEST_EXIT=%ERRORLEVEL%"',
+          'if not "%T3CP%:%T3EC%"=="caller-codepage:caller-status" exit /b 99',
           "for /f \"tokens=2 delims=:\" %%c in ('chcp') do echo AFTER=%%c",
           "chcp %TEST_CP% >nul",
           "exit /b %TEST_EXIT%",
