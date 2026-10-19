@@ -136,6 +136,15 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
         assert.ok(contents.includes(`"${newExe}" %*`));
         assert.match(contents, /set "T3EC=%ERRORLEVEL%"\r?\nif defined T3CP chcp %T3CP% >nul/);
         assert.match(contents, /exit \/b %T3EC%/);
+        yield* repointLauncher({
+          launchedAs: newExe,
+          versionsDir: versions,
+          targetEntryPath: path.join(root, "runtime/versions/2.0.0/t3.exe"),
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(HostProcess.Environment, { PATH: bin }),
+        );
+        assert.ok(!(yield* fs.readFileString(shim)).includes("chcp"));
         return;
       }
 
@@ -148,15 +157,15 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
         path.join(bin, "run.cmd"),
         [
           "@echo off",
-          'for /f "tokens=2 delims=:" %%c in (\'chcp\') do set "TEST_CP=%%c"',
+          'for /f "tokens=2 delims=:." %%c in (\'chcp\') do set "TEST_CP=%%c"',
           "chcp 437 >nul",
-          "for /f \"tokens=2 delims=:\" %%c in ('chcp') do echo BEFORE=%%c",
+          "for /f \"tokens=2 delims=:.\" %%c in ('chcp') do echo BEFORE=%%c",
           'set "T3CP=caller-codepage"',
           'set "T3EC=caller-status"',
           'call t3.cmd fixture.cjs %1 "one two" three',
           'set "TEST_EXIT=%ERRORLEVEL%"',
           'if not "%T3CP%:%T3EC%"=="caller-codepage:caller-status" exit /b 99',
-          "for /f \"tokens=2 delims=:\" %%c in ('chcp') do echo AFTER=%%c",
+          "for /f \"tokens=2 delims=:.\" %%c in ('chcp') do echo AFTER=%%c",
           "chcp %TEST_CP% >nul",
           "exit /b %TEST_EXIT%",
           "",
@@ -167,8 +176,6 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
           const child = NodeChildProcess.spawn("cmd.exe", ["/d", "/c", "run.cmd", `${status}`], {
             cwd: bin,
             stdio: ["ignore", "pipe", "pipe"],
-            // A separate console keeps the legacy codepage out of the test runner's console.
-            detached: true,
             timeout: 10_000,
           });
           const [exitCode, stdout, stderr] = await Promise.all([

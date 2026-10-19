@@ -200,15 +200,15 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("installer wind
         NodePath.join(bin, "run.cmd"),
         [
           "@echo off",
-          'for /f "tokens=2 delims=:" %%c in (\'chcp\') do set "TEST_CP=%%c"',
+          'for /f "tokens=2 delims=:." %%c in (\'chcp\') do set "TEST_CP=%%c"',
           "chcp 437 >nul",
-          "for /f \"tokens=2 delims=:\" %%c in ('chcp') do echo BEFORE=%%c",
+          "for /f \"tokens=2 delims=:.\" %%c in ('chcp') do echo BEFORE=%%c",
           'set "T3CP=caller-codepage"',
           'set "T3EC=caller-status"',
           'call t3.cmd %1 "one two" three',
           'set "TEST_EXIT=%ERRORLEVEL%"',
           'if not "%T3CP%:%T3EC%"=="caller-codepage:caller-status" exit /b 99',
-          "for /f \"tokens=2 delims=:\" %%c in ('chcp') do echo AFTER=%%c",
+          "for /f \"tokens=2 delims=:.\" %%c in ('chcp') do echo AFTER=%%c",
           "chcp %TEST_CP% >nul",
           "exit /b %TEST_EXIT%",
           "",
@@ -218,8 +218,6 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("installer wind
         const child = NodeChildProcess.spawn("cmd.exe", ["/d", "/c", "run.cmd", `${status}`], {
           cwd: bin,
           stdio: ["ignore", "pipe", "pipe"],
-          // A separate console keeps the legacy codepage out of the test runner's console.
-          detached: true,
           timeout: 10_000,
         });
         const [exitCode, stdout, stderr] = await Promise.all([

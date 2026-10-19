@@ -212,17 +212,21 @@ if ((Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $version)) {
 Step "Setting up the t3 command..."
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 $shim = Join-Path $binDir "t3.cmd"
-# cmd decodes each batch line using the console codepage, including the UTF-8 target.
+$exe = Join-Path $targetDir 't3.exe'
+$utf8 = $exe -match '[^\x00-\x7F]'
+# A Ctrl-C that ends the batch skips restoration, so only switch for a non-ASCII target.
 $shimContents = @(
-  '@echo off',
-  'setlocal EnableExtensions DisableDelayedExpansion',
-  'set "T3CP="',
-  'for /f "tokens=2 delims=:" %%c in (''chcp'') do set "T3CP=%%c"',
-  'if defined T3CP chcp 65001 >nul',
-  "`"$(Join-Path $targetDir 't3.exe')`" %*",
-  'set "T3EC=%ERRORLEVEL%"',
-  'if defined T3CP chcp %T3CP% >nul',
-  'exit /b %T3EC%',
+  '@echo off'
+  'setlocal EnableExtensions DisableDelayedExpansion'
+  if ($utf8) {
+    'set "T3CP="'
+    'for /f "tokens=2 delims=:." %%c in (''chcp'') do set "T3CP=%%c"'
+    'if defined T3CP chcp 65001 >nul'
+  }
+  "`"$exe`" %*"
+  'set "T3EC=%ERRORLEVEL%"'
+  if ($utf8) { 'if defined T3CP chcp %T3CP% >nul' }
+  'exit /b %T3EC%'
   ''
 ) -join "`r`n"
 [System.IO.File]::WriteAllText($shim, $shimContents, (New-Object System.Text.UTF8Encoding $false))

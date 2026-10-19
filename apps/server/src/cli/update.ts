@@ -116,16 +116,21 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     const current = yield* fs.readFileString(shimPath).pipe(Effect.option);
     const quoted = Option.isSome(current) ? /^"([^"]+)"/m.exec(current.value)?.[1] : undefined;
     if (quoted === undefined || !ownsTarget(quoted)) return Option.none<string>();
-    // cmd decodes each batch line using the console codepage, including the UTF-8 target.
+    const utf8 = [...input.targetEntryPath].some((character) => character.codePointAt(0)! > 0x7f);
+    // A Ctrl-C that ends the batch skips restoration, so only switch for a non-ASCII target.
     const contents = [
       "@echo off",
       "setlocal EnableExtensions DisableDelayedExpansion",
-      'set "T3CP="',
-      'for /f "tokens=2 delims=:" %%c in (\'chcp\') do set "T3CP=%%c"',
-      "if defined T3CP chcp 65001 >nul",
+      ...(utf8
+        ? [
+            'set "T3CP="',
+            'for /f "tokens=2 delims=:." %%c in (\'chcp\') do set "T3CP=%%c"',
+            "if defined T3CP chcp 65001 >nul",
+          ]
+        : []),
       `"${input.targetEntryPath}" %*`,
       'set "T3EC=%ERRORLEVEL%"',
-      "if defined T3CP chcp %T3CP% >nul",
+      ...(utf8 ? ["if defined T3CP chcp %T3CP% >nul"] : []),
       "exit /b %T3EC%",
       "",
     ].join("\r\n");
