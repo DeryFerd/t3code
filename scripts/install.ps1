@@ -213,7 +213,7 @@ Step "Setting up the t3 command..."
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 $shim = Join-Path $binDir "t3.cmd"
 $exe = Join-Path $targetDir 't3.exe'
-$utf8 = $exe -match '[^\x00-\x7F]'
+$utf8 = $exe -cmatch '[^\x00-\x7F]'
 # A Ctrl-C that ends the batch skips restoration, so only switch for a non-ASCII target.
 $shimContents = @(
   '@echo off'
